@@ -87,8 +87,10 @@ for it=1:maxIter
         p1=offspring(k);
         p2=offspring(k+1);
         if rand <= crossoverProb
+            if strcmp(crossoverType,'OX')
+                [c1,c2]=uti_PermutationCrossover(p1,p2,crossoverType,individual);
+            else
             % 【修改点】：接入 LLM 生成的交叉算子
-
                 try
                     c1=individual;
                     c2=individual;
@@ -105,6 +107,7 @@ for it=1:maxIter
                         disp('LLM生成的解不是合法的TSP排列,运行出错！');
                         continue
                 end
+            end
             c1.Cost = uti_cal_obj(c1.Position,d);
             c2.Cost = uti_cal_obj(c2.Position,d);
         else
