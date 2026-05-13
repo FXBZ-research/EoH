@@ -1,0 +1,268 @@
+% run_eoh_agent.m
+clc; clear; close all;
+
+% 1. 加载提示词模板和TSP数据
+prompts = get_eoh_prompts();
+instanceName = 'st70';
+[TSP_DisplayData, TSP_EdgeWeight] = uti_readlib_tsp(instanceName);
+[tsp] = uti_lib2struct(TSP_DisplayData, TSP_EdgeWeight);
+
+% 2. GA 评估参数设置
+par_sga.selectionType = 'Tournament';
+par_sga.crossoverType = 'LLM_Operator'; % 强制使用LLM交叉算子
+par_sga.mutationType = '2opt';          % 变异保持常规，专注测试交叉
+par_sga.fitnessType = 'Quality';
+par_sga.replacementType = 'Elitism';
+par_sga.maxIter = 5000;  % 为了加速评估，大模型调参时迭代次数设小一点
+par_sga.noIter = 500;
+par_sga.popSize = 30;
+par_sga.crossoverProb = 0.8;
+par_sga.mutationProb = 0.2;
+par_sga.eliteNum = 10;
+par_sga.ISDEBUG = 0; % 关闭内部大量打印，只看最终结果
+par_sga.ISPLOT = 0;
+
+% 3. EoH 演化参数
+evo_generations = 3; % 演化代数
+best_algorithm_code = "";
+best_fitness = inf;
+
+% 初始 Prompt
+current_prompt = prompts.init;
+fprintf('=== 开始 EoH 交叉算子自动演化 ===\n');
+
+
+% ==========================================
+% 【核心新增 1】：在循环外初始化全局对话历史
+% ==========================================
+ChatLog = {};
+
+for gen = 1:evo_generations
+    fprintf('\n[第 %d 代] 正在向 LLM 请求新的交叉算子...\n', gen);
+
+    prompt_ = current_prompt;
+
+    % 【核心新增 2】：每代开始前备份当前记忆 (存档点)
+    history_backup = ChatLog;
+
+    % 最多尝试 2 次（1次首发 + 1次自愈修正）
+    for attempt = 1:2
+        if attempt == 2
+            fprintf(' -> 正在启动 1 次自动调试与修正...\n');
+        end
+        [llm_response, ChatLog] = Call_AI_more(prompt_now, ChatLog);        % 调用多轮对话函数，传入并更新 chatHistory
+        code_str = extract_matlab_code(llm_response);   % 提取代码
+        save_code(code_str);                            % 保存代码
+        % 步骤 C：运行 GA 评估
+        try
+            [BestSol, ~] = sol_TSP_GA(tsp, par_sga);
+            current_fitness = BestSol.Cost;
+            fprintf(' -> 本代算子评估成功 (最小距离): %.2f\n', current_fitness);
+
+            % 步骤 D：构建下一代的反馈
+            if current_fitness < best_fitness
+                fprintf(' -> 发现更优的交叉算子！\n');
+                best_fitness = current_fitness;
+                best_algorithm_code = code_str;
+
+                % 成功进化，基于当前最佳生成下一代
+                current_prompt = sprintf(prompts.m1_template, best_algorithm_code);
+            else
+                fprintf(' -> 性能未提升。要求 LLM 重新思考...\n');
+                feedback = sprintf('\n你上次生成的代码跑出的距离为 %.2f，不如历史最佳的 %.2f。请审视代码逻辑，尝试另一种利用距离矩阵的启发式思路。', current_fitness, best_fitness);
+                current_prompt = sprintf(prompts.m1_template, best_algorithm_code) + feedback;
+            end
+
+            break; % 如果成功运行并完成评估，跳出 attempt 内部修正循环，进入下一代
+        catch ME
+            % 步骤 E：自愈机制 (Self-Correction) 限制单次修正
+            fprintf(' -> 算子运行时发生 MATLAB 报错：%s\n', ME.message);
+            if attempt == 1
+                % 给予一次修正机会：将刚才错误的代码和报错信息打包发给LLM
+                error_feedback = sprintf('\n【报错修正反馈】你刚才生成的代码：\n```matlab\n%s\n```\n在运行时引发了错误：\n%s\n请注意，TSP的子代必须是合法的排列。请分析报错原因，修复逻辑并重新输出完整的代码。', code_str, ME.message);
+
+                % 覆盖本代的 prompt，作为新一轮对话发给 LLM
+                prompt_now = error_feedback;
+            else
+                % 【核心新增 4】：如果修正后依然报错，执行记忆回档！
+                fprintf(' -> 修正后依然报错，放弃本代演化，进行记忆回档...\n');
+                ChatLog = history_backup;
+            end
+        end
+    end
+end
+fprintf('\n=== 演化结束 ===\n');
+fprintf('找到的最佳交叉算子最终评估距离: %.2f\n', best_fitness);
+
+%% 辅助函数：从 Markdown 提取 MATLAB 代码
+function code = extract_matlab_code(markdown_str)
+% 正则表达式匹配 ```matlab 和 ``` 之间的内容
+tokens = regexp(markdown_str, '```matlab\s*(.*?)\s*```', 'tokens', 'once');
+if isempty(tokens)
+    % 容错：如果 LLM 没写 matlab 标识，直接抓 ``` 和 ``` 之间
+    tokens = regexp(markdown_str, '```\s*(.*?)\s*```', 'tokens', 'once');
+end
+
+if ~isempty(tokens)
+    code = tokens{1};
+else
+    code = ''; % 未找到代码
+end
+end
+% % run_eoh_agent.m
+% clc; clear; close all;
+%
+% % 1. 加载提示词模板和TSP数据
+% prompts = get_eoh_prompts();
+% instanceName = 'st70';
+% [TSP_DisplayData, TSP_EdgeWeight] = uti_readlib_tsp(instanceName);
+% [tsp] = uti_lib2struct(TSP_DisplayData, TSP_EdgeWeight);
+%
+% % 2. GA 评估参数设置
+% par_sga.selectionType = 'Tournament';
+% par_sga.crossoverType = 'LLM_Operator'; % 强制使用LLM交叉算子
+% par_sga.mutationType = '2opt';          % 变异保持常规，专注测试交叉
+% par_sga.fitnessType = 'Quality';
+% par_sga.replacementType = 'Elitism';
+% par_sga.maxIter = 5000;  % 为了加速评估，大模型调参时迭代次数设小一点
+% par_sga.noIter = 500;
+% par_sga.popSize = 30;
+% par_sga.crossoverProb = 0.8;
+% par_sga.mutationProb = 0.2;
+% par_sga.eliteNum = 10;
+% par_sga.ISDEBUG = 0; % 关闭内部大量打印，只看最终结果
+% par_sga.ISPLOT = 0;
+%
+% % 3. EoH 演化参数
+% evo_generations = 3; % 演化代数
+% best_algorithm_code = "";
+% best_fitness = inf;
+%
+% % 初始 Prompt
+% current_prompt = prompts.init;
+%
+% fprintf('=== 开始 EoH 交叉算子自动演化 ===\n');
+%
+% % 如果不存在存档文件夹，可以建一个保持根目录整洁（可选）
+% if ~exist('history_operators', 'dir')
+%     mkdir('history_operators');
+% end
+%
+% for gen = 1:evo_generations
+%     fprintf('\n[第 %d 代] 正在向 LLM 请求新的交叉算子...\n', gen);
+%
+%     % 【重要修改】将本代的 Prompt 独立为一个临时变量
+%     % 这样如果本代连续报错，主线的 current_prompt 不会被这些错误日志永久污染
+%     prompt_for_this_gen = current_prompt;
+%
+%     % 最多尝试 2 次（1次首发 + 1次自愈修正）
+%     for attempt = 1:2
+%         if attempt == 2
+%             fprintf(' -> 正在启动 1 次自动调试与修正...\n');
+%         end
+%
+%         % 步骤 A：调用大模型
+%         llm_response = Call_AI(prompt_for_this_gen);
+%
+%         % 步骤 B：提取代码
+%         code_str = extract_matlab_code(llm_response);
+%         if isempty(code_str)
+%             fprintf(' -> LLM 未返回代码，跳过本次尝试...\n');
+%             continue;
+%         end
+%
+%         % 步骤 B-1：覆盖主线文件，供 sol_TSP_GA 直接调用
+%         fid = fopen('llm_smart_crossover.m', 'w');
+%         fprintf(fid, '%s', code_str);
+%         fclose(fid);
+%
+%         % 步骤 B-2：【新增】按时间戳归档保存本次生成的代码
+%         timeStamp = datestr(now, 'yyyymmdd_HHMMSS');
+%         archiveFileName = sprintf('history_operators/crossover_gen%d_att%d_%s.m', gen, attempt, timeStamp);
+%         fid_archive = fopen(archiveFileName, 'w');
+%         fprintf(fid_archive, '%s', code_str);
+%         fclose(fid_archive);
+%
+%         % 步骤 C：运行 GA 评估
+%         fprintf(' -> 代码归档至 %s，正在运行评估...\n', archiveFileName);
+%         try
+%             [BestSol, ~] = sol_TSP_GA(tsp, par_sga);
+%             current_fitness = BestSol.Cost;
+%             fprintf(' -> 本代算子评估成功 (最小距离): %.2f\n', current_fitness);
+%
+%             % 步骤 D：构建下一代的反馈 (ReAct)
+%             if current_fitness < best_fitness
+%                 fprintf(' -> 发现更优的交叉算子！\n');
+%                 best_fitness = current_fitness;
+%                 best_algorithm_code = code_str;
+%
+%                 % 成功进化，基于当前最佳生成下一代
+%                 current_prompt = sprintf(prompts.m1_template, best_algorithm_code);
+%             else
+%                 fprintf(' -> 性能未提升。要求 LLM 重新思考...\n');
+%                 feedback = sprintf('\n你上次生成的代码跑出的距离为 %.2f，不如历史最佳的 %.2f。请审视代码逻辑，尝试另一种利用距离矩阵的启发式思路。', current_fitness, best_fitness);
+%                 current_prompt = sprintf(prompts.m1_template, best_algorithm_code) + feedback;
+%             end
+%
+%             % 如果成功运行并完成评估，跳出 attempt 内部修正循环，进入下一代
+%             break;
+%
+%         catch ME
+%             % 步骤 E：自愈机制 (Self-Correction) 限制单次修正
+%             fprintf(' -> 算子运行时发生 MATLAB 报错：%s\n', ME.message);
+%
+%             if attempt == 1
+%                 % 给予一次修正机会：将刚才错误的代码和报错信息打包发给LLM
+%                 error_feedback = sprintf('\n【报错修正反馈】你刚才生成的代码：\n```matlab\n%s\n```\n在运行时引发了错误：\n%s\n请注意，TSP的子代必须是合法的排列。请分析报错原因，修复逻辑并重新输出完整的代码。', code_str, ME.message);
+%
+%                 % 覆盖本代的 prompt，直接要求修正
+%                 prompt_for_this_gen = error_feedback;
+%             else
+%                 % 如果已经是第 2 次（修正后依然报错），则放弃本代演化
+%                 fprintf(' -> 修正后依然报错，放弃本代演化。\n');
+%                 % 注意：这里不修改 current_prompt，下一代将基于之前的正常状态继续演化
+%             end
+%         end
+%     end
+% end
+%
+% fprintf('\n=== 演化结束 ===\n');
+% fprintf('找到的最佳交叉算子最终评估距离: %.2f\n', best_fitness);
+%
+%
+%
+% %% 辅助函数：从 Markdown 提取 MATLAB 代码
+% function code = extract_matlab_code(markdown_str)
+%     % 正则表达式匹配 ```matlab 和 ``` 之间的内容
+%     tokens = regexp(markdown_str, '```matlab\s*(.*?)\s*```', 'tokens', 'once');
+%     if isempty(tokens)
+%         % 容错：如果 LLM 没写 matlab 标识，直接抓 ``` 和 ``` 之间
+%         tokens = regexp(markdown_str, '```\s*(.*?)\s*```', 'tokens', 'once');
+%     end
+%
+%     if ~isempty(tokens)
+%         code = tokens{1};
+%     else
+%         code = ''; % 未找到代码
+%     end
+% end
+%
+%
+%
+% % --- 第 1 轮对话 ---
+% % 第一次调用，只传文字，不需要传 messages。
+% % 注意左边：我们要把函数返回的"新记忆"保存到一个变量 chatHistory 中
+% [reply1, chatHistory] = Call_AI("What's the highest mountain in the world?");
+% disp("AI: " + reply1);
+%
+% % --- 第 2 轮对话 ---
+% % 第二次调用，把你要说的话，连同刚才生成的 chatHistory 一起传进去！
+% [reply2, chatHistory] = Call_AI("What is the second?", chatHistory);
+% disp("AI: " + reply2);
+%
+% % --- 如果在循环中自动测试算子 ---
+% % 可以这样写：
+% % history = {};
+% % for iter = 1:5
+% %     [code, history] = Call_AI("这是第" + iter + "代的要求...", history);
+% % end

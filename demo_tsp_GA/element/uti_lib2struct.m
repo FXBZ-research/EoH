@@ -8,8 +8,10 @@ function [tsp] = uti_lib2struct(TSP_DisplayData,TSP_EdgeWeight)
     
     d=TSP_EdgeWeight;
     alpha = 0.0; % 显示增加系数
-    xmin=min(x) - range(x)*alpha;     xmax=max(x) + range(x)*alpha;    
-    ymin=min(y) - range(y)*alpha;    ymax=max(y) + range(y)*alpha;
+    xmin=min(x) - (max(x)-min(x))*alpha;     
+    xmax=max(x) + (max(x)-min(x))*alpha;    
+    ymin=min(y) - (max(y)-min(y))*alpha;    
+    ymax=max(y) + (max(y)-min(y))*alpha;
     
     tsp.n=n;
     tsp.d=d;

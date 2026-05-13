@@ -28,7 +28,6 @@ crossoverProb=par.crossoverProb;   % 交叉概率
 mutationProb=par.mutationProb;     % 变异概率 
 popSize = 2*round(par.popSize/2);  % 种群大小 确保可被2整除
 eliteNum = par.eliteNum;           % 精英大小
-popSizeLambda = par.popSizeLambda; % Lambda大小
 
 % 基于替换策略指定子代规模
 switch replacementType
@@ -85,12 +84,27 @@ for it=1:maxIter
     % #3 /* Recombination（Crossover and mutatoin） 对selected offspring Population */
     % #3.1 Crossover
     for k=1:2:numel(offspring)
-    
         p1=offspring(k);
         p2=offspring(k+1);
-        % Crossover operator 基于交叉crossoverType类型对p1和p2进行交叉
         if rand <= crossoverProb
-            [c1,c2]=uti_PermutationCrossover(p1,p2,crossoverType,individual);
+            % 【修改点】：接入 LLM 生成的交叉算子
+
+                try
+                    c1=individual;
+                    c2=individual;
+                    [c1_pos, c2_pos] = llm_smart_crossover(p1.Position, p2.Position);
+                    % 安全检查：确保 LLM 没写出包含重复城市的非法解
+                    if length(unique(c1_pos)) == n && length(unique(c2_pos)) == n
+                        c1.Position = c1_pos;
+                        c2.Position = c2_pos;
+                    else
+                        disp('LLM生成的解不是合法的TSP排列,后代不合法！');
+                        continue
+                    end
+                catch
+                        disp('LLM生成的解不是合法的TSP排列,运行出错！');
+                        continue
+                end
             c1.Cost = uti_cal_obj(c1.Position,d);
             c2.Cost = uti_cal_obj(c2.Position,d);
         else
@@ -135,28 +149,6 @@ for it=1:maxIter
             newPop = offspring(newPopIdx);
             % c. pop: 下一代种群由上一代的精英和子代的补齐构成
             pop = [elitePop newPop];
-        case 'SteadyState'
-            % a. newPop:原pop删除worst的最差个体
-            [~,worstIdx]=min([pop.Fitness]);
-            pop(worstIdx)=[];
-            % b. offspring: 两个offspring的最佳进入下一代
-            [~,bestIdx]=min([offspring.Cost]);
-            offspring=offspring(bestIdx);
-            % b. pop: 下一代种群由上一代的删除后的和子代的最佳offspring构成
-            pop = [pop offspring];
-        case 'SteadyStateLambda'
-            % a. offspring: 两个offspring的最佳进入下一代
-            [~,bestIdx]=min([offspring.Cost]);
-            offspring=offspring(bestIdx);
-            % b. pop: 下一代种群由上一代和子代的最佳offspring构成
-            pop = [pop offspring];
-            % c. lambda: 动态更新种群规模(基于Fitness)
-            %       如超出popSize+popSizeLamda,则缩小至popSize,删除clone的和劣解
-            if numel(pop) > popSize+popSizeLambda
-                pop = uti_cal_fitness(pop,fitnessType,par);
-                [~,lambdaIdx]=mink([pop.Fitness],popSizeLambda+1);
-                pop(lambdaIdx)=[];
-            end
     end
 
     % #5 /* Update Best Solution Ever Found 基于Cost 非Fitness */

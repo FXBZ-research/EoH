@@ -13,7 +13,7 @@ function [c1,c2]=uti_PermutationCrossover(p1,p2,crossoverType,individual)
             y1 = zeros(1,nPoint);
             y2 = zeros(1,nPoint);
             
-            c=randsample(nPoint,2); % 返回两个点
+            c=randperm(nPoint,2); % 返回两个点
             point1=min(c);
             point2=max(c);
             
@@ -43,7 +43,7 @@ function [c1,c2]=uti_PermutationCrossover(p1,p2,crossoverType,individual)
             
             nVar=length(x1);
             
-            c=randsample(nVar-1,2); % 返回两个点
+            c=randperm(nVar-1,2); % 返回两个点
             point1=min(c);
             point2=max(c);
             
@@ -67,7 +67,7 @@ function [c1,c2]=uti_PermutationCrossover(p1,p2,crossoverType,individual)
             x2 = p2.Position;
             
             nbrville=length(x1);
-            point=randsample(nbrville,2); %deux points de courpures al�aatoires
+            point=randperm(nbrville,2); %deux points de courpures al�aatoires
             pt1=min(point); %premier point de courpure
             pt2=max(point); %deuxieme point de courpure
             
